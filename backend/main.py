@@ -1,3 +1,5 @@
+# backend/main.py
+
 import os
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -6,8 +8,9 @@ from fastapi.responses import JSONResponse
 
 from utils.pdf_utils import extract_text_from_pdf
 from utils.text_utils import split_text_into_chunks
-from services.embedding_service import embed_chunks
-from models.schemas import MessageResponse
+from services.embedding_service import embed_chunks, embed_question
+from services.faiss_service import save_faiss_index, search_faiss_index
+from models.schemas import MessageResponse, QuestionRequest, AnswerResponse, SourceChunk
 
 # -----------------------------------------------
 # Storage folders
@@ -44,21 +47,21 @@ async def root():
         "status": "running",
         "message": "RAG PDF Q&A backend is live!",
         "endpoints": {
-            "upload_pdf": "POST /upload-pdf",
-            "ask_question": "POST /ask-question",
-            "docs": "GET /docs"
+            "upload_pdf"   : "POST /upload-pdf",
+            "ask_question" : "POST /ask-question",
+            "docs"         : "GET /docs"
         }
     }
 
 # -----------------------------------------------
 # POST /upload-pdf
 #
-# 1. Validate file is PDF
+# 1. Validate PDF
 # 2. Save to disk
 # 3. Extract text
-# 4. Split into chunks
-# 5. Embed all chunks        ← NEW THIS STEP
-# 6. Return success
+# 4. Chunk text
+# 5. Embed chunks
+# 6. Save to FAISS
 # -----------------------------------------------
 @app.post("/upload-pdf", response_model=MessageResponse)
 async def upload_pdf(file: UploadFile = File(...)):
@@ -107,22 +110,96 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to chunk text: {str(e)}"
         )
 
-    # ---- Embed all chunks ----
-    # This converts every chunk into a vector
-    # We print shape in terminal for debugging
+    # ---- Embed chunks ----
     try:
         embeddings = embed_chunks(chunks)
         print(f"Embeddings shape: {embeddings.shape}")
-        # e.g. (42, 384) means 42 chunks, each with 384 numbers
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate embeddings: {str(e)}"
         )
 
-    # ---- Return success ----
+    # ---- Save to FAISS ----
+    try:
+        save_faiss_index(embeddings, chunks)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save FAISS index: {str(e)}"
+        )
+
     return MessageResponse(
-        message=f"PDF processed and embedded successfully. {len(chunks)} chunks created.",
+        message=f"PDF fully processed and stored. {len(chunks)} chunks indexed.",
         filename=file.filename,
         chunks_created=len(chunks)
+    )
+
+
+# -----------------------------------------------
+# POST /ask-question
+#
+# 1. Validate question is not empty
+# 2. Embed the question
+# 3. Search FAISS for top 3 relevant chunks
+# 4. Return best answer + all source chunks
+# -----------------------------------------------
+@app.post("/ask-question", response_model=AnswerResponse)
+async def ask_question(request: QuestionRequest):
+
+    # ---- Validate question ----
+    if not request.question or not request.question.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty."
+        )
+
+    # ---- Embed the question ----
+    try:
+        question_embedding = embed_question(request.question)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to embed question: {str(e)}"
+        )
+
+    # ---- Search FAISS ----
+    try:
+        results = search_faiss_index(
+            question_embedding=question_embedding,
+            top_k=3        # Return top 3 most relevant chunks
+        )
+    except FileNotFoundError as e:
+        # No PDF has been uploaded yet
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to search index: {str(e)}"
+        )
+
+    # ---- Handle no results ----
+    if not results:
+        raise HTTPException(
+            status_code=404,
+            detail="No relevant content found. Try rephrasing your question."
+        )
+
+    # ---- Build response ----
+    # Best answer = top result (lowest distance = most relevant)
+    best_answer = results[0]["text"]
+
+    # Build source chunks list for full transparency
+    source_chunks = [
+        SourceChunk(
+            text=r["text"],
+            score=round(r["score"], 4)
+        )
+        for r in results
+    ]
+
+    return AnswerResponse(
+        question=request.question,
+        answer=best_answer,
+        source_chunks=source_chunks
     )
