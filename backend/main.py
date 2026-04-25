@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from utils.pdf_utils import extract_text_from_pdf
 from utils.text_utils import split_text_into_chunks
+from services.embedding_service import embed_chunks
 from models.schemas import MessageResponse
 
 # -----------------------------------------------
@@ -52,11 +53,12 @@ async def root():
 # -----------------------------------------------
 # POST /upload-pdf
 #
-# 1. Validate file is a PDF
+# 1. Validate file is PDF
 # 2. Save to disk
-# 3. Extract text from PDF
-# 4. Split text into chunks
-# 5. Return success + chunk count
+# 3. Extract text
+# 4. Split into chunks
+# 5. Embed all chunks        ← NEW THIS STEP
+# 6. Return success
 # -----------------------------------------------
 @app.post("/upload-pdf", response_model=MessageResponse)
 async def upload_pdf(file: UploadFile = File(...)):
@@ -87,15 +89,15 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to extract text from PDF: {str(e)}"
+            detail=f"Failed to extract text: {str(e)}"
         )
 
     # ---- Split into chunks ----
     try:
         chunks = split_text_into_chunks(
             text=extracted_text,
-            chunk_size=500,    # Each chunk = 500 characters
-            overlap=100        # 100 characters shared with next chunk
+            chunk_size=500,
+            overlap=100
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -105,9 +107,22 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to chunk text: {str(e)}"
         )
 
+    # ---- Embed all chunks ----
+    # This converts every chunk into a vector
+    # We print shape in terminal for debugging
+    try:
+        embeddings = embed_chunks(chunks)
+        print(f"Embeddings shape: {embeddings.shape}")
+        # e.g. (42, 384) means 42 chunks, each with 384 numbers
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate embeddings: {str(e)}"
+        )
+
     # ---- Return success ----
     return MessageResponse(
-        message=f"PDF processed successfully. Text split into {len(chunks)} chunks.",
+        message=f"PDF processed and embedded successfully. {len(chunks)} chunks created.",
         filename=file.filename,
         chunks_created=len(chunks)
     )
