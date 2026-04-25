@@ -1,10 +1,9 @@
-# backend/main.py
-
 import os
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from utils.pdf_utils import extract_text_from_pdf
 from utils.text_utils import split_text_into_chunks
@@ -39,29 +38,48 @@ app.add_middleware(
 )
 
 # -----------------------------------------------
-# Health Check
+# Serve frontend/index.html at root URL
+# Mount the frontend folder as static files
+#
+# Why: Opening index.html via file:// causes
+# browser security blocks on fetch() calls.
+# Serving via FastAPI puts both on same origin.
 # -----------------------------------------------
-@app.get("/", response_class=JSONResponse)
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+app.mount(
+    "/static",
+    StaticFiles(directory=FRONTEND_DIR),
+    name="static"
+)
+
+# -----------------------------------------------
+# Serve index.html at http://127.0.0.1:8000/app
+# -----------------------------------------------
+@app.get("/", response_class=FileResponse)
+async def serve_frontend():
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    return FileResponse(index_path)
+
+
+# -----------------------------------------------
+# Health Check API (JSON)
+# -----------------------------------------------
+@app.get("/health", response_class=JSONResponse)
 async def root():
     return {
         "status": "running",
         "message": "RAG PDF Q&A backend is live!",
         "endpoints": {
+            "frontend"     : "GET  /",
             "upload_pdf"   : "POST /upload-pdf",
             "ask_question" : "POST /ask-question",
-            "docs"         : "GET /docs"
+            "docs"         : "GET  /docs"
         }
     }
 
+
 # -----------------------------------------------
 # POST /upload-pdf
-#
-# 1. Validate PDF
-# 2. Save to disk
-# 3. Extract text
-# 4. Chunk text
-# 5. Embed chunks
-# 6. Save to FAISS
 # -----------------------------------------------
 @app.post("/upload-pdf", response_model=MessageResponse)
 async def upload_pdf(file: UploadFile = File(...)):
@@ -138,11 +156,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 # -----------------------------------------------
 # POST /ask-question
-#
-# 1. Validate question is not empty
-# 2. Embed the question
-# 3. Search FAISS for top 3 relevant chunks
-# 4. Return best answer + all source chunks
 # -----------------------------------------------
 @app.post("/ask-question", response_model=AnswerResponse)
 async def ask_question(request: QuestionRequest):
@@ -167,10 +180,9 @@ async def ask_question(request: QuestionRequest):
     try:
         results = search_faiss_index(
             question_embedding=question_embedding,
-            top_k=3        # Return top 3 most relevant chunks
+            top_k=3
         )
     except FileNotFoundError as e:
-        # No PDF has been uploaded yet
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(
@@ -186,10 +198,8 @@ async def ask_question(request: QuestionRequest):
         )
 
     # ---- Build response ----
-    # Best answer = top result (lowest distance = most relevant)
     best_answer = results[0]["text"]
 
-    # Build source chunks list for full transparency
     source_chunks = [
         SourceChunk(
             text=r["text"],
