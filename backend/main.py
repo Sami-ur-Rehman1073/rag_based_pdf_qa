@@ -1,9 +1,21 @@
-from fastapi import FastAPI
+import os
+import shutil
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from utils.pdf_utils import extract_text_from_pdf
+from utils.text_utils import split_text_into_chunks
+from models.schemas import MessageResponse
+
 # -----------------------------------------------
-# Create the FastAPI application instance
+# Storage folders
+# -----------------------------------------------
+UPLOAD_DIR = "../storage/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# -----------------------------------------------
+# FastAPI app
 # -----------------------------------------------
 app = FastAPI(
     title="RAG PDF Q&A System",
@@ -13,22 +25,17 @@ app = FastAPI(
 
 # -----------------------------------------------
 # CORS Middleware
-# This allows our HTML frontend (opened directly
-# in browser) to talk to this backend without
-# being blocked by browser security policies.
 # -----------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # Allow all origins (fine for local dev)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],       # Allow GET, POST, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # -----------------------------------------------
-# Health Check Route
-# Visit http://127.0.0.1:8000/ to confirm
-# the server is running correctly
+# Health Check
 # -----------------------------------------------
 @app.get("/", response_class=JSONResponse)
 async def root():
@@ -41,3 +48,66 @@ async def root():
             "docs": "GET /docs"
         }
     }
+
+# -----------------------------------------------
+# POST /upload-pdf
+#
+# 1. Validate file is a PDF
+# 2. Save to disk
+# 3. Extract text from PDF
+# 4. Split text into chunks
+# 5. Return success + chunk count
+# -----------------------------------------------
+@app.post("/upload-pdf", response_model=MessageResponse)
+async def upload_pdf(file: UploadFile = File(...)):
+
+    # ---- Validate file type ----
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted. Please upload a .pdf file."
+        )
+
+    # ---- Save uploaded file ----
+    save_path = os.path.join(UPLOAD_DIR, file.filename)
+    try:
+        with open(save_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save file: {str(e)}"
+        )
+
+    # ---- Extract text ----
+    try:
+        extracted_text = extract_text_from_pdf(save_path)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to extract text from PDF: {str(e)}"
+        )
+
+    # ---- Split into chunks ----
+    try:
+        chunks = split_text_into_chunks(
+            text=extracted_text,
+            chunk_size=500,    # Each chunk = 500 characters
+            overlap=100        # 100 characters shared with next chunk
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to chunk text: {str(e)}"
+        )
+
+    # ---- Return success ----
+    return MessageResponse(
+        message=f"PDF processed successfully. Text split into {len(chunks)} chunks.",
+        filename=file.filename,
+        chunks_created=len(chunks)
+    )
