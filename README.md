@@ -1,3 +1,12 @@
+---
+title: RAG PDF Q&A System
+emoji: 📄
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # 📄 RAG-Based PDF Question Answering System
 
 A fully local Retrieval-Augmented Generation (RAG) system that lets you upload a PDF and ask questions about it — no paid APIs required.
@@ -11,6 +20,7 @@ A fully local Retrieval-Augmented Generation (RAG) system that lets you upload a
 | Vector DB | FAISS |
 | PDF Parsing | PyPDF |
 | Frontend | HTML + Tailwind CSS |
+| Deployment | HuggingFace Spaces (Docker) |
 
 ## 🚀 Features
 
@@ -21,7 +31,7 @@ A fully local Retrieval-Augmented Generation (RAG) system that lets you upload a
 - Ask natural language questions
 - Get answers with source text
 
-## ⚙️ Setup Instructions
+## ⚙️ Local Setup
 
 ### 1. Clone the repo
 ```bash
@@ -32,7 +42,7 @@ cd rag_based_pdf_qa
 ### 2. Create and activate virtual environment
 ```bash
 python -m venv venv
-venv\Scripts\activate   # Windows
+venv\Scripts\activate
 ```
 
 ### 3. Install dependencies
@@ -46,7 +56,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-### 5. Open the frontend
-Open `frontend/index.html` in your browser.
+### 5. Open the app
+Go to `http://127.0.0.1:8000`
 
 ## 📁 Project Structure

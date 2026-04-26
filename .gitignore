@@ -6,6 +6,14 @@ venv/
 env/
 ENV/
 
+# Keep storage folder structure but ignore generated files
+backend/storage/faiss_index.index
+backend/storage/chunks.pkl
+backend/storage/uploads/*.pdf
+
+# Old storage folder (root level)
+storage/
+
 # ================================
 # Python Cache & Compiled Files
 # ================================
