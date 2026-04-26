@@ -8,8 +8,11 @@ import faiss
 # -----------------------------------------------
 # Paths where FAISS index and chunks are stored
 # -----------------------------------------------
-FAISS_INDEX_PATH = "../storage/faiss_index.index"
-CHUNKS_PATH      = "../storage/chunks.pkl"
+BASE_DIR         = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STORAGE_DIR      = os.path.join(BASE_DIR, "storage")
+FAISS_INDEX_PATH = os.path.join(STORAGE_DIR, "faiss_index.index")
+CHUNKS_PATH      = os.path.join(STORAGE_DIR, "chunks.pkl")
+
 
 
 # -----------------------------------------------

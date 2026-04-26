@@ -1,3 +1,5 @@
+# backend/main.py
+
 import os
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -12,9 +14,11 @@ from services.faiss_service import save_faiss_index, search_faiss_index
 from models.schemas import MessageResponse, QuestionRequest, AnswerResponse, SourceChunk
 
 # -----------------------------------------------
-# Storage folders
+# Base directory = backend/ folder
+# Works identically locally and on Render
 # -----------------------------------------------
-UPLOAD_DIR = "../storage/uploads"
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "storage", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # -----------------------------------------------
@@ -22,7 +26,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # -----------------------------------------------
 app = FastAPI(
     title="RAG PDF Q&A System",
-    description="Upload a PDF and ask questions about it — fully local, no paid APIs.",
+    description="Upload a PDF and ask questions — fully local, no paid APIs.",
     version="1.0.0"
 )
 
@@ -38,14 +42,9 @@ app.add_middleware(
 )
 
 # -----------------------------------------------
-# Serve frontend/index.html at root URL
-# Mount the frontend folder as static files
-#
-# Why: Opening index.html via file:// causes
-# browser security blocks on fetch() calls.
-# Serving via FastAPI puts both on same origin.
+# Serve frontend as static files
 # -----------------------------------------------
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
 app.mount(
     "/static",
     StaticFiles(directory=FRONTEND_DIR),
@@ -53,19 +52,18 @@ app.mount(
 )
 
 # -----------------------------------------------
-# Serve index.html at http://127.0.0.1:8000/app
+# Serve frontend at root /
 # -----------------------------------------------
 @app.get("/", response_class=FileResponse)
 async def serve_frontend():
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     return FileResponse(index_path)
 
-
 # -----------------------------------------------
-# Health Check API (JSON)
+# Health Check
 # -----------------------------------------------
 @app.get("/health", response_class=JSONResponse)
-async def root():
+async def health():
     return {
         "status": "running",
         "message": "RAG PDF Q&A backend is live!",
@@ -73,10 +71,10 @@ async def root():
             "frontend"     : "GET  /",
             "upload_pdf"   : "POST /upload-pdf",
             "ask_question" : "POST /ask-question",
-            "docs"         : "GET  /docs"
+            "docs"         : "GET  /docs",
+            "health"       : "GET  /health"
         }
     }
-
 
 # -----------------------------------------------
 # POST /upload-pdf
@@ -84,14 +82,12 @@ async def root():
 @app.post("/upload-pdf", response_model=MessageResponse)
 async def upload_pdf(file: UploadFile = File(...)):
 
-    # ---- Validate file type ----
     if not file.filename.endswith(".pdf"):
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are accepted. Please upload a .pdf file."
         )
 
-    # ---- Save uploaded file ----
     save_path = os.path.join(UPLOAD_DIR, file.filename)
     try:
         with open(save_path, "wb") as buffer:
@@ -102,7 +98,6 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to save file: {str(e)}"
         )
 
-    # ---- Extract text ----
     try:
         extracted_text = extract_text_from_pdf(save_path)
     except ValueError as e:
@@ -113,7 +108,6 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to extract text: {str(e)}"
         )
 
-    # ---- Split into chunks ----
     try:
         chunks = split_text_into_chunks(
             text=extracted_text,
@@ -128,7 +122,6 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to chunk text: {str(e)}"
         )
 
-    # ---- Embed chunks ----
     try:
         embeddings = embed_chunks(chunks)
         print(f"Embeddings shape: {embeddings.shape}")
@@ -138,7 +131,6 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"Failed to generate embeddings: {str(e)}"
         )
 
-    # ---- Save to FAISS ----
     try:
         save_faiss_index(embeddings, chunks)
     except Exception as e:
@@ -160,14 +152,12 @@ async def upload_pdf(file: UploadFile = File(...)):
 @app.post("/ask-question", response_model=AnswerResponse)
 async def ask_question(request: QuestionRequest):
 
-    # ---- Validate question ----
     if not request.question or not request.question.strip():
         raise HTTPException(
             status_code=400,
             detail="Question cannot be empty."
         )
 
-    # ---- Embed the question ----
     try:
         question_embedding = embed_question(request.question)
     except Exception as e:
@@ -176,7 +166,6 @@ async def ask_question(request: QuestionRequest):
             detail=f"Failed to embed question: {str(e)}"
         )
 
-    # ---- Search FAISS ----
     try:
         results = search_faiss_index(
             question_embedding=question_embedding,
@@ -190,14 +179,12 @@ async def ask_question(request: QuestionRequest):
             detail=f"Failed to search index: {str(e)}"
         )
 
-    # ---- Handle no results ----
     if not results:
         raise HTTPException(
             status_code=404,
             detail="No relevant content found. Try rephrasing your question."
         )
 
-    # ---- Build response ----
     best_answer = results[0]["text"]
 
     source_chunks = [
