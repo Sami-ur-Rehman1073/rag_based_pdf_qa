@@ -1,6 +1,5 @@
 ---
 title: Rag Pdf Qa
-emoji: 📄
 colorFrom: blue
 colorTo: green
 sdk: docker
