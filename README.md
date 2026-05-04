@@ -1,11 +1,4 @@
----
-title: RAG PDF Q&A System
-emoji: 📄
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-pinned: false
----
+
 
 # 📄 RAG-Based PDF Question Answering System
 
